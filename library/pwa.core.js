@@ -432,7 +432,7 @@ class Update {
     }
 }
 
-const $PWA = new class {
+export const $PWA = new class {
     constructor() {
         this.file = '/worker.js';
         this.core = new Core(this);
