@@ -392,20 +392,41 @@ class Events {
 class Update {
     static key = 'sw-update';
 
+    #onupdate() {
+        const update = ({ data: { type, payload } }) => {
+            if (type !== 'NEW_VERSION') return;
+            this.removeEventListener('message', update);
+
+            const { version } = payload;
+            const updateType = $PWA.meta.version === version ? "hash" : "version";
+            const value = payload[updateType];
+
+            this.storage.setItem(Update.key, { type: updateType, value, payload });
+        }
+
+        this.addEventListener('message', update);
+    }
+
     constructor() {
         this.channel = new BroadcastChannel(Update.key);
+        this.storage = new storage(sessionStorage);
+        this.#onupdate();
     }
 
     /**
-     * The `addEventListener`
+     * Appends an event listener for events whose type attribute value is type. The callback argument sets the callback that will be invoked when the event is dispatched.
      * @param {"message" | "messageerror"} type 
      * @param {Function} listener 
      */
     addEventListener(type, listener) {
         this.channel.addEventListener(type, listener);
-        this.channel.removeEventListener
     }
 
+    /**
+     * Removes the event listener in target's event listener list with the same type, callback, and options.
+     * @param {"message" | "messageerror"} type 
+     * @param {Function} listener 
+     */
     removeEventListener(type, listener) {
         this.channel.removeEventListener(type, listener);
     }
@@ -432,17 +453,6 @@ const $PWA = new class {
 (async () => {
     if (!$PWA.enabled) return err(`(service worker) unavailable -> https://developer.mozilla.org/ru/docs/Web/API/Navigator/serviceWorker`);
 
-    const update = ({ data: { type, payload } }) => {
-        if (type !== 'NEW_VERSION') return;
-        $PWA.update.removeEventListener('message', update);
-
-        const { version } = payload;
-        const updateType = $PWA.meta.version === version ? "hash" : "version";
-        const value = payload[updateType];
-
-        sessionStorage.setItem(Update.key, JSON.stringify({ type: updateType, value, payload }));
-    }
-
     const controllchange = async () => {
         $PWA.core.set(await $PWA.message.META());
         log(`loaded v:${$PWA.meta.version} h:${$PWA.meta.hash}`);
@@ -457,7 +467,6 @@ const $PWA = new class {
 
     sw.addEventListener('controllerchange', controllchange);
 
-    $PWA.update.addEventListener('message', update)
     await $PWA.controll.register();
 
     if (sw.controller) {
