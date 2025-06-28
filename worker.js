@@ -1,4 +1,4 @@
-const version = '0.0.0';
+const version = '0.0.1';
 const hash = 'ooooo';
 
 const cacheName = `pwa-tunime-${hash}-v${version}`;
@@ -81,14 +81,63 @@ const settings = {
 };
 
 worker.addEventListener('install', (event) => {
+    /**
+     * Запрашивает разрешение на установку
+     * @param {BroadcastChannel} channel 
+     * @returns {Promise<boolean>}
+     */
+    const requestInstallPermission = (channel) => {
+        return new Promise((resolve, reject) => {
+            const end = (bool) => {
+                channel.removeEventListener('message', listener);
+                if (bool) {
+                    return resolve(bool);
+                } else {
+                    return reject(new Error('Installation rejected by user'));
+                }
+            }
+
+            const listener = (event) => {
+                switch (event.data.type) {
+                    case 'INSTALL_APPROVED':
+                        end(true);
+                        break;
+                    case 'INSTALL_REJECTED':
+                        end(false);
+                        break;
+                    case 'INSTALL_RECEIVED':
+                        clearTimeout(timer);
+                        break;
+                }
+            }
+
+            channel.addEventListener('message', listener);
+
+            const timer = setTimeout(() => {
+                end(true);
+            }, 1000);
+
+            channel.postMessage({
+                type: 'INSTALL_PERMISSION_REQUEST',
+                payload: { version, hash, cacheName, total: appShellFilesToCache.length }
+            });
+        });
+    }
+
     event.waitUntil(
         settings.getValue('install', {
             activate: true,
             batchSize: 2,
-            channel: 'sw-update'
+            channel: 'sw-update',
+            install: true
         }).then(async (setup) => {
-            await settings.update({ 'source': 'worker' });
             const broadcast = new BroadcastChannel(setup.channel);
+
+            if (!setup.install) {
+                await requestInstallPermission(broadcast);
+            }
+
+            await settings.update({ 'source': 'worker' });
 
             broadcast.postMessage({
                 type: 'NEW_VERSION',
@@ -96,7 +145,6 @@ worker.addEventListener('install', (event) => {
             });
 
             await caching(appShellFilesToCache, setup);
-
 
             if (setup.activate) {
                 worker.skipWaiting();
@@ -177,53 +225,44 @@ async function caching(filesToCache, setup) {
 
 (() => {
     worker.addEventListener('fetch', event => {
-        const url = new URL(event.request.url);
-        if (url.pathname.startsWith('/javascript/pages/anime/')) {
-            event.respondWith(
-                fetch(event.request).then(response => {
-                    if (response.status !== 404) {
-                        return response;
-                    }
-                    return fetch('/javascript/pages/anime/default.js');
-                }).catch(() => {
-                    return fetch('/javascript/pages/anime/default.js');
-                })
-            );
-        }
-    });
-
-    worker.addEventListener('fetch', event => {
-        const url = new URL(event.request.url);
-
-        if (servers.some(s => url.href.startsWith(s))) {
-            event.respondWith(fetch(new Request(event.request, {
-                ...event.request,
-                headers: new Headers({
-                    ...Object.fromEntries(event.request.headers),
-                    Authorization: (event.request.headers.get('Authorization') || '') + version
-                })
-            })));
-            return;
-        }
-
         event.respondWith((async () => {
-            log(`${event.request.method}: ${url.pathname}`);
-            if (worker.location.hostname !== url.hostname) {
+            const url = new URL(event.request.url);
+            try {
+                if (servers.some(s => url.href.startsWith(s))) {
+                    return fetch(new Request(event.request, {
+                        ...event.request,
+                        headers: new Headers({
+                            ...Object.fromEntries(event.request.headers),
+                            Authorization: (event.request.headers.get('Authorization') || '') + version
+                        })
+                    }));
+                }
+
+                if (url.pathname.startsWith('/javascript/pages/anime/')) {
+                    const response = await fetch(event.request);
+                    if (response.status !== 404) return response;
+
+                    return fetch('/javascript/pages/anime/default.js');
+                }
+
+                if (worker.location.hostname !== url.hostname) {
+                    return fetch(event.request);
+                }
+
+                const cached = await caches.match(event.request);
+                if (cached) return cached;
+
+                if (url.pathname === "/") {
+                    return (await caches.match('/index.html')) || fetch(event.request);
+                }
+
+                return (await caches.match(url.pathname)) || fetch(event.request);
+            } catch (e) {
+                log(`fetch error ${e}`)
                 return fetch(event.request);
             }
-
-            const cached = await caches.match(event.request);
-            if (cached) return cached;
-
-            if (url.pathname === "/") {
-                return (await caches.match('/index.html')) || fetch(event.request);
-            }
-
-            return (await caches.match(url.pathname)) || fetch(event.request);
         })());
     });
-
-
 })(log('fetch event support enabled'));
 
 (() => {
@@ -243,7 +282,7 @@ async function caching(filesToCache, setup) {
         'SETUP_CLEAR': async () => {
             return { complete: await settings.clear() };
         },
-        'GET_SETUP': async ({ key = 'install', defaultValue = { batchSize: 2, activate: true, channel: 'sw-update' } }) => {
+        'GET_SETUP': async ({ key = 'install', defaultValue = { batchSize: 2, activate: true, channel: 'sw-update', install: true } }) => {
             return settings.getValue(key, defaultValue);
         },
         'RECACHE': async (payload) => {

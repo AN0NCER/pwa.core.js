@@ -430,6 +430,13 @@ class Update {
     removeEventListener(type, listener) {
         this.channel.removeEventListener(type, listener);
     }
+
+    /**
+     * Sends the given message to other BroadcastChannel objects set up for this channel. Messages can be structured objects, e.g. nested objects and arrays.
+     */
+    postMessage(message) {
+        this.channel.postMessage(message);
+    }
 }
 
 export const $PWA = new class {
@@ -473,3 +480,9 @@ export const $PWA = new class {
         controllchange();
     }
 })(log('module connected'));
+
+$PWA.update.addEventListener('message', ({ data: { type } }) => {
+    if (type === 'INSTALL_PERMISSION_REQUEST') {
+        $PWA.update.postMessage({ type: 'INSTALL_RECEIVED' });
+    }
+});
