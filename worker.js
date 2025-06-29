@@ -48,8 +48,15 @@ const settings = {
 
     update: async function (updates) {
         const current = await this.get() || {};
-        const merged = { ...current, ...updates };
-        return await this.set(merged);
+
+        const merge = (t, s) => Object.keys(s).reduce((r, k) => {
+            r[k] = s[k] && typeof s[k] === 'object' && !Array.isArray(s[k])
+                ? merge(t[k] || {}, s[k])
+                : s[k];
+            return r;
+        }, { ...t });
+
+        return await this.set(merge(current, updates));
     },
 
     getValue: async function (key, defaultValue = null) {
