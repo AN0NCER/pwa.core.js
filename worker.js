@@ -1,67 +1,85 @@
 const version = '0.0.1';
 const hash = 'ooooo';
 
-const cacheName = `pwa-tunime-${hash}-v${version}`;
+const cacheName = `pwa-sw-${hash}-v${version}`;
 
 const appShellFilesToCache = [];
 
 const servers = [];
 
 const log = console.log.bind(console, `[${version}]:[${hash}] ->`);
+const err = console.error.bind(console, `[${version}]:[${hash}] ->`);
+const warn = console.warn.bind(console, `[${version}]:[${hash}] ->`);
+
 const worker = self;
 
-const settings = {
-    key: 'settings',
-    cache: 'pwa-settings',
-    val: null,
+const setup = {
+    // Дефолтные значения
+    defaults: {
+        install: {
+            channel: 'sw-update',
+            activate: true,
+            install: true,
+            batchSize: 2
+        }
+        // Добавьте другие параметры здесь
+    },
 
-    get: async function () {
-        if (this.val) return this.val;
-        try {
-            const cache = await caches.open(this.cache);
-            const response = await cache.match(this.key);
-            if (response) {
-                this.val = await response.json()
-                return this.val;
+    // Кеш операции
+    cache: {
+        val: null,
+        req: 'settings',
+        key: 'pwa-settings',
+
+        get: async function () {
+            if (this.val) return this.val;
+            try {
+                const cache = await caches.open(this.key);
+                const response = await cache.match(this.req);
+                if (response) {
+                    this.val = await response.json();
+                    return this.val;
+                }
+                return null;
+            } catch (error) {
+                err('error get settings:', error);
+                return null;
             }
-            return null;
-        } catch (error) {
-            log('Settings get error:', error);
-            return null;
+        },
+
+        set: async function (value) {
+            try {
+                const cache = await caches.open(this.key);
+                const response = new Response(JSON.stringify(value));
+                await cache.put(this.req, response);
+                this.val = value;
+                return true;
+            } catch (error) {
+                err('error set settings:', error);
+                return false;
+            }
+        },
+
+        clear: async function () {
+            try {
+                const cache = await caches.open(this.key);
+                await cache.delete(this.req);
+                this.val = null;
+                return true;
+            } catch (error) {
+                err('error clear settings:', error);
+                return false;
+            }
         }
-
     },
 
-    set: async function (setup) {
-        try {
-            const cache = await caches.open(this.cache);
-            const response = new Response(JSON.stringify(setup));
-            await cache.put(this.key, response);
-            this.val = setup;
-            return true;
-        } catch (error) {
-            log('Settings set error:', error);
-            return false;
-        }
-
-    },
-
-    update: async function (updates) {
-        const current = await this.get() || {};
-
-        const merge = (t, s) => Object.keys(s).reduce((r, k) => {
-            r[k] = s[k] && typeof s[k] === 'object' && !Array.isArray(s[k])
-                ? merge(t[k] || {}, s[k])
-                : s[k];
-            return r;
-        }, { ...t });
-
-        return await this.set(merge(current, updates));
-    },
-
-    getValue: async function (key, defaultValue = null) {
-        const all = await this.get();
+    // Получить значение настройки
+    getValue: async function (key, customDefault = null) {
+        const all = await this.cache.get();
         const storedValue = all && all.hasOwnProperty(key) ? all[key] : null;
+
+        // Используем дефолтные значения из setup.defaults или переданные customDefault
+        const defaultValue = customDefault !== null ? customDefault : this.defaults[key] || null;
 
         if (storedValue === null) {
             return defaultValue;
@@ -74,16 +92,58 @@ const settings = {
         return storedValue;
     },
 
-    clear: async function () {
-        try {
-            const cache = await caches.open(this.cache);
-            await cache.delete(this.key);
-            this.val = null;
-            return true;
-        } catch (error) {
-            log('Settings clear error:', error);
-            return false;
+    // Получить все настройки
+    getAll: async function () {
+        const stored = await this.cache.get() || {};
+        const result = {};
+
+        // Объединяем дефолтные значения с сохраненными
+        for (const key in this.defaults) {
+            result[key] = await this.getValue(key);
         }
+
+        // Добавляем любые дополнительные настройки, которые не имеют дефолтов
+        for (const key in stored) {
+            if (!this.defaults.hasOwnProperty(key)) {
+                result[key] = stored[key];
+            }
+        }
+
+        return result;
+    },
+
+    // Получить дефолтные значения
+    getDefaults: function () {
+        return { ...this.defaults };
+    },
+
+    // Установить значение настройки
+    setValue: async function (key, value) {
+        const current = await this.cache.get() || {};
+        current[key] = value;
+        return await this.cache.set(current);
+    },
+
+    // Обновить настройки (глубокое слияние)
+    update: async function (updates) {
+        const current = await this.cache.get() || {};
+
+        const merge = (target, source) => {
+            return Object.keys(source).reduce((result, key) => {
+                result[key] = source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])
+                    ? merge(target[key] || {}, source[key])
+                    : source[key];
+                return result;
+            }, { ...target });
+        };
+
+        return await this.cache.set(merge(current, updates));
+    },
+
+    // Сброс к дефолтным значениям
+    reset: async function () {
+        await this.cache.set(this.defaults);
+        return await this.getAll();
     }
 };
 
@@ -132,28 +192,23 @@ worker.addEventListener('install', (event) => {
     }
 
     event.waitUntil(
-        settings.getValue('install', {
-            activate: true,
-            batchSize: 2,
-            channel: 'sw-update',
-            install: true
-        }).then(async (setup) => {
-            const broadcast = new BroadcastChannel(setup.channel);
+        setup.getValue('install').then(async (s) => {
+            const broadcast = new BroadcastChannel(s.channel);
 
-            if (!setup.install) {
+            if (!s.install) {
                 await requestInstallPermission(broadcast);
             }
 
-            await settings.update({ 'source': 'worker' });
+            await setup.update({ 'source': 'worker' });
 
             broadcast.postMessage({
                 type: 'NEW_VERSION',
                 payload: { version, hash, cacheName, total: appShellFilesToCache.length }
             });
 
-            await caching(appShellFilesToCache, setup);
+            await caching(appShellFilesToCache, s);
 
-            if (setup.activate) {
+            if (s.activate) {
                 worker.skipWaiting();
             }
         })
@@ -168,39 +223,38 @@ worker.addEventListener('activate', (event) => {
 
         await Promise.all(
             names.map(name => {
-                if (name !== cacheName && name !== settings.cache) {
+                if (name !== cacheName && name !== setup.cache.key) {
                     return caches.delete(name);
                 }
             })
         );
 
-        log('worker activated');
+        log('worker activated.');
     })());
 });
 
-async function caching(filesToCache, setup) {
-    const broadcast = new BroadcastChannel(setup.channel);
+async function caching(filesToCache, { channel, batchSize }) {
+    const broadcast = new BroadcastChannel(channel);
     try {
         const cache = await caches.open(cacheName);
         const total = filesToCache.length;
         let processed = 0;
 
         if (total === 0) {
-            log('No files to cache.');
+            warn('no files to cache.');
             return;
         }
 
-        log(`Starting caching for ${total} files.`);
+        log(`caching ${total} files.`);
 
-        // Функция для обработки одного батча (остается без изменений)
         const batch = async (files) => {
             const batchPromises = files.map(async (file) => {
                 let success = true;
                 try {
                     await cache.add(file);
-                } catch (err) {
+                } catch (error) {
                     success = false;
-                    console.error(`[SW]: Failed to cache ${file}`, err);
+                    err(`!failed to cache ${file}`, error);
                 }
 
                 processed++;
@@ -215,18 +269,17 @@ async function caching(filesToCache, setup) {
             await Promise.allSettled(batchPromises);
         };
 
-        // Разбиваем файлы на батчи (остается без изменений)
-        for (let i = 0; i < total; i += setup.batchSize) {
-            const batchFiles = filesToCache.slice(i, i + setup.batchSize);
+        // Разбиваем файлы на батчи
+        for (let i = 0; i < total; i += batchSize) {
+            const batchFiles = filesToCache.slice(i, i + batchSize);
             await batch(batchFiles);
         }
 
-        log('Caching complete.');
+        log(`caching complete!`);
         broadcast.postMessage({ type: 'CACHE_COMPLETE', payload: { version, cacheName } });
     } catch (error) {
-        log(`Failed to start caching: ${error}`);
+        err('!failed start caching!:', error);
         broadcast.postMessage({ type: 'CACHE_ERROR', payload: { error: error.message } });
-
     }
 }
 
@@ -265,7 +318,7 @@ async function caching(filesToCache, setup) {
 
                 return (await caches.match(url.pathname)) || fetch(event.request);
             } catch (e) {
-                log(`fetch error ${e}`)
+                warn(`fetch error ${e}`)
                 return fetch(event.request);
             }
         })());
@@ -279,18 +332,25 @@ async function caching(filesToCache, setup) {
             return { complete: true };
         },
         'META': async () => {
-            const source = await settings.getValue('source', 'worker');
+            const source = await setup.getValue('source', 'worker');
             return { version, hash, source };
         },
         'SETUP': async (payload) => {
-            await settings.update(payload);
-            return { value: await settings.get() };
+            if (!payload || typeof payload !== 'object') {
+                return { error: 'Invalid payload' };
+            }
+            await setup.update(payload);
+            return { value: await setup.getAll() };
         },
         'SETUP_CLEAR': async () => {
-            return { complete: await settings.clear() };
+            await setup.setValue('install', setup.defaults.install);
+            return { complete: true };
         },
-        'GET_SETUP': async ({ key = 'install', defaultValue = { batchSize: 2, activate: true, channel: 'sw-update', install: true } }) => {
-            return settings.getValue(key, defaultValue);
+        'GET_SETUP': async ({ key = 'install', defaultValue = null }) => {
+            return setup.getValue(key, defaultValue);
+        },
+        'GET_DEFAULTS': () => {
+            return setup.getDefaults();
         },
         'RECACHE': async (payload) => {
             if (!payload?.channel) return { error: 'channel unset' };
@@ -302,9 +362,9 @@ async function caching(filesToCache, setup) {
 
             await caches.delete(cacheName);
 
-            const setup = await settings.getValue('install', { activate: true, batchSize: 2 });
+            const settings = await setup.getValue('install');
 
-            caching(appShellFilesToCache, { ...setup, ...payload });
+            caching(appShellFilesToCache, { ...settings, ...payload });
             return { process: true };
         }
     }
