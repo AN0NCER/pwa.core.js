@@ -51,11 +51,9 @@ class Session {
 
     #syncWithServiceWorker() {
         // Отправляем sessionID в service worker, но не ждем результат
-        this.pwa.message.SETUP({
-            currentSessionId: this.sessionID
-        }).catch((error) => {
+        this.pwa.message.NEW_SESSION(this.sessionID).catch((error) => {
             warn(`Failed to sync session with service worker: ${error}`);
-        });
+        })
     }
 
     #generateSessionID() {
@@ -310,6 +308,10 @@ class Message {
 
     static GET_SETUP(payload) {
         return new Message().on('GET_SETUP', { payload });
+    }
+
+    static NEW_SESSION(payload) {
+        return new Message().on('NEW_SESSION', { payload });
     }
 
     static instance;
