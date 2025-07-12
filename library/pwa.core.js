@@ -543,9 +543,3 @@ export const $PWA = new class {
         controllchange();
     }
 })(log('module connected'));
-
-$PWA.update.addEventListener('message', ({ data: { type } }) => {
-    if (type === 'INSTALL_PERMISSION_REQUEST') {
-        $PWA.update.postMessage({ type: 'INSTALL_RECEIVED' });
-    }
-});
