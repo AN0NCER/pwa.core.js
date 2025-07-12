@@ -535,6 +535,10 @@ export const $PWA = new class {
 
     await $PWA.controll.register();
 
+    if (!sw.controller) {
+        await $PWA.controll.register();
+    }
+
     if (sw.controller) {
         controllchange();
     }
