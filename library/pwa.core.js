@@ -28,6 +28,61 @@ const storage = class {
     }
 }
 
+class Session {
+    static key = 'pwa-session';
+
+    #load() {
+        // Получаем sessionID из localStorage
+        this.sessionID = this.storage.getItem(Session.key);
+        if (!this.sessionID) {
+            this.#createNewSession();
+        }
+    }
+
+    #createNewSession() {
+        this.sessionID = this.#generateSessionID();
+        this.storage.setItem(Session.key, this.sessionID);
+
+        // Синхронизируем с service worker (без ожидания результата)
+        this.#syncWithServiceWorker();
+
+        log(`New session created: ${this.sessionID}`);
+    }
+
+    #syncWithServiceWorker() {
+        // Отправляем sessionID в service worker, но не ждем результат
+        this.pwa.message.SETUP({
+            currentSessionId: this.sessionID
+        }).catch((error) => {
+            warn(`Failed to sync session with service worker: ${error}`);
+        });
+    }
+
+    #generateSessionID() {
+        return Date.now().toString(36) + Math.random().toString(36).slice(2);
+    }
+
+    constructor(pwa) {
+        /**@type {$PWA} */
+        this.pwa = pwa;
+        this.storage = new storage(sessionStorage);
+        this.#load();
+
+        // Подписываемся на события обновления для создания новой сессии
+        this.pwa.events.on('update', () => {
+            this.newSession();
+        });
+    }
+
+    /**
+     * Создает новую сессию
+     */
+    newSession() {
+        this.#createNewSession();
+        return this.sessionID;
+    }
+}
+
 class Core {
     static key = 'pwa-core';
     /**@type {Core} */
@@ -448,6 +503,7 @@ export const $PWA = new class {
         this.message = Message;
         this.events = new Events();
         this.update = new Update();
+        this.session = new Session(this);
     }
 
     #enabled = sw ? true : false;
@@ -466,6 +522,7 @@ export const $PWA = new class {
         $PWA.events.trigger('load', $PWA, { replay: true });
 
         if ($PWA.core.update.has) {
+            $PWA.events.trigger('update', $PWA);
             if (!$PWA.core.reload) return;
             $PWA.core.update.reload();
             window.location.reload();

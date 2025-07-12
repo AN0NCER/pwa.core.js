@@ -1,4 +1,4 @@
-const version = '0.0.1';
+const version = '0.0.2';
 const hash = 'ooooo';
 
 const cacheName = `pwa-sw-${hash}-v${version}`;
@@ -147,6 +147,57 @@ const setup = {
     }
 };
 
+const session = {
+    // Проверить, была ли установка отклонена в текущем сеансе
+    isInstallationRejectedInSession: async function () {
+        const current = await setup.cache.get() || {};
+        const sessionId = current.currentSessionId;
+        const rejectedInSession = current.rejectedInSession;
+
+        // Если нет sessionId, значит сессия еще не синхронизирована
+        if (!sessionId) {
+            return false;
+        }
+
+        return rejectedInSession === sessionId;
+    },
+
+    // Отметить установку как отклоненную в текущем сеансе
+    markInstallationRejectedInSession: async function () {
+        const current = await setup.cache.get() || {};
+        const sessionId = current.currentSessionId;
+
+        // Если нет sessionId, не можем отметить отклонение
+        if (!sessionId) {
+            warn('Cannot mark installation as rejected: no session ID');
+            return false;
+        }
+
+        current.rejectedInSession = sessionId;
+        return await setup.cache.set(current);
+    },
+
+    // Очистить отклонение (для принудительного сброса)
+    clearRejection: async function () {
+        const current = await setup.cache.get() || {};
+        delete current.rejectedInSession;
+        return await setup.cache.set(current);
+    },
+
+    // Установить sessionId (вызывается из основного потока)
+    setSessionId: async function (sessionId) {
+        const current = await setup.cache.get() || {};
+        current.currentSessionId = sessionId;
+        return await setup.cache.set(current);
+    },
+
+    // Получить текущий sessionId
+    getCurrentSessionId: async function () {
+        const current = await setup.cache.get() || {};
+        return current.currentSessionId;
+    }
+}
+
 worker.addEventListener('install', (event) => {
     /**
      * Запрашивает разрешение на установку
@@ -170,7 +221,10 @@ worker.addEventListener('install', (event) => {
                         end(true);
                         break;
                     case 'INSTALL_REJECTED':
-                        end(false);
+                        session.markInstallationRejectedInSession().then(() => {
+                            log('Installation rejected for current session');
+                            end(false);
+                        });
                         break;
                     case 'INSTALL_RECEIVED':
                         clearTimeout(timer);
@@ -193,6 +247,12 @@ worker.addEventListener('install', (event) => {
 
     event.waitUntil(
         setup.getValue('install').then(async (s) => {
+            // Проверяем, была ли установка отклонена в текущем сеансе
+            const isRejectedInSession = await session.isInstallationRejectedInSession();
+            if (isRejectedInSession) {
+                return;
+            }
+
             const broadcast = new BroadcastChannel(s.channel);
 
             if (!s.install) {
@@ -351,6 +411,12 @@ async function caching(filesToCache, { channel, batchSize }) {
         },
         'GET_DEFAULTS': () => {
             return setup.getDefaults();
+        },
+        'NEW_SESSION': async (payload) => {
+            if (!payload || typeof payload !== "string") {
+                return { error: 'Invalid payload' };
+            }
+            await session.setSessionId(payload);
         },
         'RECACHE': async (payload) => {
             if (!payload?.channel) return { error: 'channel unset' };
