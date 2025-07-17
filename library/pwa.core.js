@@ -5,26 +5,22 @@ const err = console.error.bind(console, `[pwa] ->`);
 const warn = console.warn.bind(console, `[pwa] ->`);
 
 const storage = class {
-    #value = undefined;
-
     constructor(type) {
         /**@type {Storage} */
         this.storage = type;
     }
 
     getItem(key) {
-        if (this.#value) return this.#value;
-        this.#value = JSON.parse(this.storage.getItem(key));
-        return this.#value;
+        const item = this.storage.getItem(key);
+        return item ? JSON.parse(item) : null;
     }
 
     setItem(key, value) {
-        this.#value = value;
-        this.storage.setItem(key, JSON.stringify(this.#value));
+        this.storage.setItem(key, JSON.stringify(value));
     }
 
-    destroy() {
-        this.#value = undefined;
+    removeItem(key) {
+        this.storage.removeItem(key);
     }
 }
 
