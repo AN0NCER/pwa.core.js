@@ -120,7 +120,7 @@ class Core {
 
             on() {
                 this.#update = (() => {
-                    if (!this.core.new || !this.core.old) return false;
+                    if (Object.keys(this.core.new).length === 0 || Object.keys(this.core.old).length === 0) return false;
                     return this.core.new.version !== this.core.old.version || this.core.new.hash !== this.core.old.hash;
                 })();
                 this.#content = (() => {
@@ -222,6 +222,15 @@ class Meta {
                 } catch (e) {
                     err(`Ошибка при проверке обновления ${e}`);
                     return false;
+                }
+            }
+
+            get old() {
+                try {
+                    const saved = this.meta.storage.getItem(Meta.key);
+                    return saved.old || {};
+                } catch (e) {
+                    err(`Ошибка при получении старого значения`)
                 }
             }
 
